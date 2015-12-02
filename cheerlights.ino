@@ -13,6 +13,8 @@
   mode. If no characters arive on BLE within a 30s timeout, revert
   to updating each pixel in turn to a random Cheerlights colour.
 
+  More about Cheerlights at: http://cheerlights.com/
+
   This code is based on heavily modifying Adafruit examples, their
   original comment header is included below.
 *********************************************************************/
