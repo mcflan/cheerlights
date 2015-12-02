@@ -58,7 +58,7 @@
     #define FACTORYRESET_ENABLE     0
 
     #define PIN                     6
-    #define NUMPIXELS               10
+    #define NUMPIXELS               7
 /*=========================================================================*/
 
 Adafruit_NeoPixel pixel = Adafruit_NeoPixel(NUMPIXELS, PIN);
@@ -106,7 +106,12 @@ extern uint8_t packetbuffer[];
 /**************************************************************************/
 void setup(void)
 {
-  // Kill this with fire: stops it working without usb connected!: while (!Serial);  // required for Flora & Micro
+  // Only un-comment the line below if you want to debug using the 
+  // serial monitor. It will completely stop the Flora from working
+  // in stand-alone mode (no USB connected.)
+
+  // while (!Serial);  // required for Flora & Micro
+
   delay(500);
 
   // turn off neopixel
@@ -151,31 +156,23 @@ void setup(void)
 
   ble.verbose(false);  // debug info is a little annoying after this point!
 
-  /* Wait for connection */
-  while (! ble.isConnected()) {
-      delay(500);
-  }
-
-  Serial.println(F("***********************"));
-
-  // Set Bluefruit to DATA mode
-  Serial.println( F("Switching to DATA mode!") );
-  ble.setMode(BLUEFRUIT_MODE_DATA);
-
-  Serial.println(F("***********************"));
-
 }
 
-/**************************************************************************/
-/*!
-    @brief  Constantly poll for new command or response data
-*/
-/**************************************************************************/
+int check_ble_connection(void)
+{
+  /* Check for connection */
+  if (!ble.isConnected()) {
+    // Enter data mode.
+    ble.setMode(BLUEFRUIT_MODE_DATA);
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
 
 #define CL_BUFSIZE      (16)
 #define CL_NCOLOURS     (12)
-char buf[CL_BUFSIZE];
-int head = 0;
 
 struct cheerlight_s {
   char *name;
@@ -197,48 +194,153 @@ struct cheerlight_s {
   { "pink",     0xff, 0xc0, 0xcb },
 };
 
-void loop(void)
+char buf[CL_BUFSIZE];
+int head = 0;
+
+// Get a character from the ring buffer at
+// a given +ve or -ve offset, wrapping as
+// appropriate to ensure we don't overflow.
+// Doesn't change the buffer contents or
+// head index.
+int ringbuf_get(int head, int offs)
 {
+  int bufptr = head + offs;
 
-  while ( ble.available() )
-  {
-    int c = ble.read();
+  // Wrap back into the span of the buffer. Yes,
+  // could have used modulus but this is much
+  // faster and simpler for small offsets.
+  while (bufptr < 0) bufptr += CL_BUFSIZE;
+  while (bufptr >= CL_BUFSIZE) bufptr -= CL_BUFSIZE;
 
-    Serial.print((char)c); // Echo incoming char to debug serial port
+  return buf[bufptr];
+}
 
-    // The Adafruit LE iOS app provides no framing on rx'd
-    // mqtt messages so we need to get clever and push the
-    // incoming characters through a ring buffer and check
-    // for colour-name matches each time.
-    
-    buf[head++] = c;
-    if (head >= CL_BUFSIZE)
-      head = 0; // Wrap back to start of buffer.
+#define PACKET_COLOR_LEN                (6)
 
-    for (int col = 0; col < CL_NCOLOURS; col++) {
-      int len = strlen(colourmap[col].name);
-      int i;
-      for (i = 0; i < len; i++) {
-        int bufptr = head - len + i;
-        if (bufptr < 0) bufptr += CL_BUFSIZE;
-        if (colourmap[col].name[i] != buf[bufptr])
-          break;
+int nextpix = 0;
+
+// Check for Color Picker command from Adafruit
+// Bluefruit app. We don't check the checksum at
+// present. Naughty. However, this is not a
+// safety-critical app.
+void check_bluefruit_color_cmd(int head)
+{
+  int len = PACKET_COLOR_LEN;
+
+  if ( (ringbuf_get(head, 0 - len) == '!') &&
+       (ringbuf_get(head, 1 - len) == 'C') ) {
+
+    uint8_t red = ringbuf_get(head, 2 - len);
+    uint8_t grn = ringbuf_get(head, 3 - len);
+    uint8_t blu = ringbuf_get(head, 4 - len);
+
+    Serial.print("\nColor Picker message: #");
+    Serial.print(red, HEX);
+    Serial.print(grn, HEX);
+    Serial.print(blu, HEX);
+    Serial.print('\n');
+
+    // Set next Neopixel to this colour.
+    pixel.setPixelColor(nextpix++, red, grn, blu);
+    if (nextpix >= NUMPIXELS)
+      nextpix = 0; // Wrap back to 1st pixel.
+    pixel.show(); // This sends the updated pixel color to the hardware.
+  }
+}
+
+void parse_ble_char(char c)
+{
+  // The Adafruit LE iOS app provides no framing on rx'd
+  // mqtt messages so we need to get clever and push the
+  // incoming characters through a ring buffer and check
+  // for colour-name matches each time.
+  
+  buf[head++] = c;
+  if (head >= CL_BUFSIZE)
+    head = 0; // Wrap back to start of buffer.
+
+  
+  // Check for color-picker binary msg.
+  check_bluefruit_color_cmd(head);
+
+  // Scan the latest characters in the buffer against
+  // all known cheerlights colour names.
+  for (int col = 0; col < CL_NCOLOURS; col++) {
+    int len = strlen(colourmap[col].name);
+    int i;
+    for (i = 0; i < len; i++) {
+      if (colourmap[col].name[i] != ringbuf_get(head, i - len))
+        break;
+    }
+    if (i == len) {
+      // Success. We matched a colour in our table.
+      // Set all neopixels to that colour.
+      Serial.print("\ncheerlights ");
+      Serial.print(colourmap[col].name);
+      Serial.print('\n');
+      for(uint8_t i = 0; i < NUMPIXELS; i++) {
+        pixel.setPixelColor(i, pixel.Color(
+          colourmap[col].red,
+          colourmap[col].green,
+          colourmap[col].blue
+        ) );
       }
-      if (i == len) {
-        // Success! We matched a colour in our table.
-        // Set all neopixels to that colour.
-        Serial.print("Cheerlights: ");
-        Serial.print(colourmap[col].name);
-        Serial.print('\n');
-        for(uint8_t i = 0; i < NUMPIXELS; i++) {
-          pixel.setPixelColor(i, pixel.Color(
-            colourmap[col].red,
-            colourmap[col].green,
-            colourmap[col].blue
-          ) );
-        }
-        pixel.show(); // This sends the updated pixel color to the hardware.
-      }
+      pixel.show(); // This sends the updated pixel color to the hardware.
     }
   }
 }
+
+void set_random_colour(void)
+{
+  // Pick a random Cheerlights colour (not black.)
+  int random_colour = 1+random(CL_NCOLOURS-1);
+
+  // Set next Neopixel to this colour.
+  pixel.setPixelColor(nextpix++,
+    colourmap[random_colour].red,
+    colourmap[random_colour].green,
+    colourmap[random_colour].blue
+  );
+  if (nextpix >= NUMPIXELS)
+    nextpix = 0; // Wrap back to 1st pixel.
+  pixel.show(); // This sends the updated pixel color to the hardware.
+}
+
+#define BLE_TIMEOUT     (30000) // Half a minute. Ish.
+
+uint16_t timer = 1000; // Start random seq after 1 second.     
+
+// Linker should set such variables to zero anyway but I'm being
+// paranoid as am unfamiliar with 'duino Wiring build system 
+// internals.
+int ble_is_connected = 0;
+
+void loop(void)
+{
+
+  while ( ble_is_connected && ble.available() ) {
+    int c = ble.read();
+    Serial.print((char)c); // Echo incoming char to debug serial port
+    timer = BLE_TIMEOUT;
+    parse_ble_char(c); // Do something useful with the char.
+  }
+
+  if (!ble_is_connected) {
+    if (check_ble_connection()) {
+      ble_is_connected = 1;
+      // Judgin from original Adafruit code, I think we only
+      // need to check for connections and enter data mode once
+      // on start-up, so we don't reset the ble_is_connected
+      // flag anywhere except on start-up where it's 0.
+    }
+  }
+
+  delay(1);
+  if (timer == 0) {
+    timer = 1000; // 1 second-ish to next random colour.
+    set_random_colour();
+  } else {
+    timer--;
+  }
+}
+
