@@ -1,4 +1,23 @@
 /*********************************************************************
+  Adafruit Flora + Bluefruit LE + Neopixels + Cheerlights
+
+  By James L Macfarlane 2015.
+
+  This code lives at https://github.com/mcflan/cheerlights
+
+  Quick and dirty hack to make a string of Neopixels connected to
+  an Adafruit Flora respond to messages over Bluetooth LE from
+  the Flora Bluefruit module. Will set all "pixels" to any
+  Cheerlights colour seen in Bluetooth UART data. Will also
+  obey packets from Adafruit Bluefruit iOS/'Droid App Color Picker
+  mode. If no characters arive on BLE within a 30s timeout, revert
+  to updating each pixel in turn to a random Cheerlights colour.
+
+  This code is based on heavily modifying Adafruit examples, their
+  original comment header is included below.
+*********************************************************************/
+
+/*********************************************************************
  This is an example for our nRF51822 based Bluefruit LE modules
 
  Pick one up today in the adafruit shop!
