@@ -269,6 +269,27 @@ void check_bluefruit_color_cmd(int head)
   }
 }
 
+// Sometimes, the neopixels are too bright in a wearable
+// application.
+// This is a quick hack to scale all RGB levels by a factor. This
+// does not apply when setting RGB via the colour picker.
+#define BRIGHTNESS (0.25)
+#define ADJ_BRIGHTNESS(x) ((uint8_t)((float)(x) * BRIGHTNESS))
+
+void set_pixel_from_colmap(int pixnum, int col)
+{
+    if (col < 0)
+        col = 0;
+    if (col >= CL_NCOLOURS)
+        col = CL_NCOLOURS - 1;
+
+    pixel.setPixelColor(pixnum, pixel.Color(
+      ADJ_BRIGHTNESS(colourmap[col].red),
+      ADJ_BRIGHTNESS(colourmap[col].green),
+      ADJ_BRIGHTNESS(colourmap[col].blue)
+    ) );
+}
+
 void parse_ble_char(char c)
 {
   // The Adafruit LE iOS app provides no framing on rx'd
@@ -300,11 +321,7 @@ void parse_ble_char(char c)
       Serial.print(colourmap[col].name);
       Serial.print('\n');
       for(uint8_t i = 0; i < NUMPIXELS; i++) {
-        pixel.setPixelColor(i, pixel.Color(
-          colourmap[col].red,
-          colourmap[col].green,
-          colourmap[col].blue
-        ) );
+        set_pixel_from_colmap(i, col);
       }
       pixel.show(); // This sends the updated pixel color to the hardware.
     }
@@ -317,11 +334,7 @@ void set_random_colour(void)
   int random_colour = 1+random(CL_NCOLOURS-1);
 
   // Set next Neopixel to this colour.
-  pixel.setPixelColor(nextpix++,
-    colourmap[random_colour].red,
-    colourmap[random_colour].green,
-    colourmap[random_colour].blue
-  );
+  set_pixel_from_colmap(nextpix++, random_colour);
   if (nextpix >= NUMPIXELS)
     nextpix = 0; // Wrap back to 1st pixel.
   pixel.show(); // This sends the updated pixel color to the hardware.
